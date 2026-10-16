@@ -111,3 +111,21 @@ test('registers Lift inside the Watch source container instead of the visible ac
  assert.equal(sources.children.length,1);assert.equal(visible.children.length,0);
  sources.children[0].events['hover:enter']();await settle();assert.equal(h.state.options.component,'lift');
 });
+test('opening a known movie skips similar results and loads only its matching playlist',async()=>{
+ const items=[{id:70,name:'Film',origin_name:'Film',year:2020,type:1},{id:80,name:'Film',origin_name:'Film',year:2000,type:1}];
+ const h=harness(url=>url.includes('/search?')?{items}:route(url));
+ h.window.LampaLift.open({id:12,title:'Film',original_title:'Film',release_date:'2020-01-01'});await settle();
+ assert(h.requests.some(x=>x.url.includes('/playlist?id=70')));assert(!h.requests.some(x=>x.url.includes('/playlist?id=80')));
+ assert.equal(h.rows().length,1);assert.equal(h.rows()[0].attrs['data-lift-entry'],'11');assert.equal(h.state.play,undefined);
+});
+test('tries original title when localized search returned only unrelated films',async()=>{
+ const h=harness(url=>url.includes('/search?')?{items:url.includes('Original')?[{id:70,name:'Перевод',origin_name:'Original',year:2020,type:1}]:[{id:9,name:'Не то',year:2020,type:1}]}:route(url));
+ h.window.LampaLift.open({id:12,title:'Фильм',original_title:'Original',release_date:'2020-01-01'});await settle();
+ assert(h.requests.some(x=>x.url.includes('/playlist?id=70')));assert.equal(h.rows().length,1);
+});
+test('explicit Search Lift still allows choosing another release',async()=>{
+ const h=harness(url=>url.includes('/search?')?{items:[{id:70,name:'Film',origin_name:'Film',year:2020,type:1}]}:route(url));
+ h.window.LampaLift.open({id:12,title:'Film',original_title:'Film',release_date:'2020-01-01'});await settle();
+ h.state.filter.onSearch('Film');await settle();
+ assert.equal(h.rows()[0].attrs['data-lift-result'],70);
+});

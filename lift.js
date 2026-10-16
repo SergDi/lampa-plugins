@@ -1,4 +1,4 @@
-/* Lift for Lampa v0.2.0. Standalone script; no remote code or native bridge required. */
+/* Lift for Lampa v0.2.1. Standalone script; no remote code or native bridge required. */
 (function (root) {
     'use strict';
     var DISCOVERY = 'https://borov.sourcecraft.site/domains/domains.txt';
@@ -38,6 +38,31 @@
         return data.items.filter(function (x) {
             return x && /^\d+$/.test(String(x.id)) && Number(x.id) > 0 && typeof x.name === 'string';
         });
+    }
+    function normalizeTitle(value) {
+        var title = String(value || '').toLowerCase();
+        if (title.normalize) title = title.normalize('NFKC');
+        return title.replace(/ё/g, 'е').replace(/[\s.,:;!?"'«»“”‘’()\[\]{}\-–—_]+/g, ' ').trim();
+    }
+    function matchMovie(items, movie) {
+        var tv = movie.media_type === 'tv' || (movie.media_type !== 'movie' && Boolean(movie.first_air_date || movie.original_name || (movie.name && !movie.title)));
+        var year = String((tv ? movie.first_air_date : movie.release_date) || movie.year || '').slice(0, 4);
+        if (!/^[12]\d{3}$/.test(year)) return null;
+        var original = normalizeTitle(movie.original_title || movie.original_name);
+        var titles = unique([normalizeTitle(movie.title), normalizeTitle(movie.name), original].filter(Boolean));
+        var seen = {};
+        var exact = items.filter(function (item) {
+            // Lift IDs belong to its own catalogue; they are not TMDB IDs.
+            var knownType = (tv ? [3, 5, 7] : [1, 2, 6]).indexOf(Number(item.type)) >= 0;
+            if (!knownType || String(item.year) !== year || seen[item.id]) return false;
+            var itemOriginal = normalizeTitle(item.origin_name);
+            if (original && itemOriginal && original !== itemOriginal) return false;
+            var titleMatch = titles.indexOf(normalizeTitle(item.name)) >= 0 || (itemOriginal && titles.indexOf(itemOriginal) >= 0);
+            if (!titleMatch) return false;
+            seen[item.id] = true;
+            return true;
+        });
+        return exact.length === 1 ? exact[0] : null;
     }
     function entries(data) {
         if (!data || typeof data !== 'object') throw new Error('Некорректный плейлист Lift');
@@ -88,7 +113,7 @@
             });
         });
     }
-    var core = {domains: domains, entries: entries, searchItems: searchItems, firstValid: firstValid, escape: escape, mediaCandidates: mediaCandidates};
+    var core = {matchMovie: matchMovie, domains: domains, entries: entries, searchItems: searchItems, firstValid: firstValid, escape: escape, mediaCandidates: mediaCandidates};
     if (typeof module === 'object' && module.exports && !root.document) { module.exports = core; return; }
     if (!root.document || root.lampa_lift_plugin) return;
     root.lampa_lift_plugin = true;
@@ -188,7 +213,7 @@
         var self = this, movie = object.movie, explorer = new L.Explorer(object);
         var scroll = new L.Scroll({mask: true, over: true}), filter = new L.Filter(object);
         var all = [], matches = [], rows = [], last, job, timer, busy = false, stopped = false, destroyed = false, reload = false;
-        var query = object.search, selectedId;
+        var query = object.search, selectedId, manualSearch = false;
         var cardKey = [movie.source || 'tmdb', movie.original_name || movie.name ? 'tv' : 'movie', movie.id || query].join(':');
         var choices = L.Storage.get('lift_choices_v2', {});
         if (!choices || typeof choices !== 'object' || Array.isArray(choices)) choices = {};
@@ -270,7 +295,7 @@
             self.activate();
         }
         this.search = function (value) {
-            if (typeof value === 'string' && value.trim()) query = value.trim();
+            if (typeof value === 'string' && value.trim()) { query = value.trim(); manualSearch = true; }
             all = []; selectedId = null; lastKey = null; save();
             clear(); filter.set('sort', []); filter.set('filter', []);
             var s = begin();
@@ -278,11 +303,21 @@
             find(query).then(function (items) {
                 if (!live(s)) return [];
                 var original = movie.original_title || movie.original_name;
-                return !items.length && original && original !== query ? find(original) : items;
+                if (manualSearch || matchMovie(items, movie) || !original || normalizeTitle(original) === normalizeTitle(query)) return items;
+                return find(original).then(function (extra) {
+                    var ids = {};
+                    return items.concat(extra).filter(function (item) {
+                        if (ids[item.id]) return false;
+                        ids[item.id] = true; return true;
+                    });
+                }).catch(function () { return items; });
             }).then(function (items) {
                 if (!live(s)) return;
                 finish(); matches = items;
-                if (!items.length) message('В Lift ничего не найдено'); else drawMatches();
+                var exact = manualSearch ? null : matchMovie(items, movie);
+                if (exact) { selectedId = exact.id; save(); self.load(); }
+                else if (!items.length) message('В Lift ничего не найдено');
+                else drawMatches();
             }).catch(function (err) { error(s, err); });
         };
         this.load = function () {
@@ -386,7 +421,7 @@
             if (sources.length) sources.append(button);
             else render.find('.view--torrent').first().after(button);
         });
-        root.LampaLift = {version: '0.2.0', open: open};
+        root.LampaLift = {version: '0.2.1', open: open};
     }
     var tries = 0;
     function boot() {
