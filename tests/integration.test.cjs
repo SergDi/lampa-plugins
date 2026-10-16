@@ -11,6 +11,7 @@ function harness(respond, saved={}) {
  class Node {
   constructor(html='') { this.html=html;this.events={};this.children=[];this.fields={};this.attrs={};this.length=1;this[0]=this; }
   on(names,fn) { names.split(' ').forEach(n=>this.events[n]=fn);return this; }
+  off(name){delete this.events[name];return this;}
   find(key) { return this.fields[key] ||= new Node(); }
   text(v) { if(v===undefined)return this.value;this.value=String(v);return this; }
   attr(k,v){this.attrs[k]=v;return this;}
@@ -73,8 +74,8 @@ test('series filters retain specials, remember season and focus, and use direct 
  const series={title:'Series',seasons:[{season:0,episodes:[{...film,episode:'1',video_key:21}]},{season:1,episodes:[{...film,episode:'1',video_key:31},{...film,episode:'2',video_key:32}]}]};
  const h=harness(url=>url.includes('/playlist?')?series:route(url));
  h.window.LampaLift.open({id:1,name:'Series'});await settle();h.select(0);await settle();
- const seasons=h.state.filter.data.filter.find(x=>x.stype==='season');assert.equal(seasons.items[0].title,'Сезон 0');
- h.state.filter.onSelect('filter',seasons,seasons.items[1]);await new Promise(r=>setTimeout(r,20));
+ const seasons=h.state.filter.data.filter;assert.equal(seasons[0].title,'Сезон 0');
+ h.state.filter.onSelect('filter',seasons[1]);await new Promise(r=>setTimeout(r,20));
  assert.equal(h.rows().length,2);h.select(1);await settle();
  assert.equal(h.state.play.episode,'2');assert.equal(h.state.playlist.length,2);assert.equal(typeof h.state.playlist[0].url,'string');assert.doesNotThrow(()=>JSON.stringify(h.state.play));
  h.window.LampaLift.open({id:1,name:'Series'});await settle();assert.equal(h.rows().length,2);
@@ -138,7 +139,17 @@ test('See screen exposes all seasons even when fastest mirror returns only seaso
   return route(url);
  });
  h.window.LampaLift.open({id:80752,name:'Видеть',original_name:'See'});await settle();h.select(0);await settle();
- const choices=h.state.filter.data.filter.find(x=>x.stype==='season').items;
+ const choices=h.state.filter.data.filter;
  assert.deepEqual(Array.from(choices,x=>x.season),[1,2,3]);
  assert.equal(h.state.play,undefined);
+});
+
+test('season selector exposes choices directly and changes season in one selection',async()=>{
+ const h=harness(url=>url.includes('/playlist?')?{title:'See',seasons:[1,2,3].map(season=>({season,episodes:[{...film,video_key:season,episode:'1'}]}))}:route(url));
+ h.window.LampaLift.open({id:80752,name:'Видеть',original_name:'See'});await settle();h.select(0);await settle();
+ const options=h.state.filter.data.filter;
+ assert.deepEqual(Array.from(options,x=>x.title),['Сезон 1','Сезон 2','Сезон 3']);
+ assert(options.every(x=>!x.items));
+ h.state.filter.onSelect('filter',options[2]);await new Promise(r=>setTimeout(r,20));
+ assert.equal(h.rows()[0].attrs['data-lift-entry'],'3');
 });

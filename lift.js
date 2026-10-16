@@ -1,4 +1,4 @@
-/* Lift for Lampa v0.2.2. Standalone script; no remote code or native bridge required. */
+/* Lift for Lampa v0.2.3. Standalone script; no remote code or native bridge required. */
 (function (root) {
     'use strict';
     var DISCOVERY = 'https://borov.sourcecraft.site/domains/domains.txt';
@@ -301,10 +301,9 @@
             if (available.indexOf(format) < 0) format = available.indexOf('hls') >= 0 ? 'hls' : available[0];
             filter.set('sort', available.map(function (f) { return {title: formatLabels[f], format: f, selected: f === format}; }));
             filter.chosen('sort', format ? [formatLabels[format]] : []);
-            filter.set('filter', seasons.length && seasons[0] != null ? [{
-                title: 'Сезон', stype: 'season', subtitle: 'Сезон ' + season,
-                items: seasons.map(function (n) { return {title: 'Сезон ' + n, season: n, selected: n === season}; })
-            }] : []);
+            filter.set('filter', seasons.length && seasons[0] != null ? seasons.map(function (n) {
+                return {title: 'Сезон ' + n, stype: 'season', season: n, selected: n === season};
+            }) : []);
             filter.chosen('filter', season == null ? [] : ['Сезон ' + season]);
         }
         function drawEntries() {
@@ -385,15 +384,19 @@
             explorer.appendHead(filter.render()); explorer.appendFiles(scroll.render());
             scroll.minus(explorer.render().find('.explorer__files-head'));
             filter.render().find('.filter--sort span').text('Формат');
+            filter.render().find('.filter--filter span').text('Сезон');
+            filter.render().find('.filter--filter').off('hover:enter').on('hover:enter', function () {
+                filter.show('Сезон', 'filter');
+            });
             filter.render().find('.filter--search span').text('Поиск Lift');
             filter.onSearch = self.search;
             filter.onBack = function () { self.start(); };
             filter.onSelect = function (type, a, b) {
                 if (job) job.abort(); finish();
                 if (type === 'sort') format = a.format;
-                else if (a.stype === 'season' && b) { season = b.season; lastKey = null; }
+                else if (a.stype === 'season') { season = a.season; lastKey = null; }
                 drawEntries();
-                // Filter.show opens its parent menu after onSelect; close it on the next turn.
+                // Restore the screen controller after the native selector finishes closing.
                 clearTimeout(timer);
                 timer = setTimeout(function () { if (current()) { L.Select.hide(); self.start(); } }, 0);
             };
@@ -455,7 +458,7 @@
             if (sources.length) sources.append(button);
             else render.find('.view--torrent').first().after(button);
         });
-        root.LampaLift = {version: '0.2.2', open: open};
+        root.LampaLift = {version: '0.2.3', open: open};
     }
     var tries = 0;
     function boot() {
