@@ -1,6 +1,6 @@
 # Lampa plugins
 
-## Lift v0.2.3
+## Lift v0.2.4
 
 Standalone JavaScript plugin for Lampa. Add `https://sergdi.github.io/lampa-plugins/lift.js` in Settings → Extensions → Add plugin, then restart Lampa.
 
@@ -24,3 +24,7 @@ The browser integration was checked using the installed Mac Lampa web assets in 
 Enable GitHub Pages from the repository branch root. `.nojekyll` keeps deployment static. `lift.js` is the complete distributable; no build is required.
 
 Playlist responses are collected from all available mirrors (each request has a 6-second timeout), because mirrors can return different subsets of a series. Episodes are deduplicated and sorted by season and episode. Media URLs and audio/subtitle metadata are kept together from a single mirror per episode. If a mirror is offline, successful replies are still used.
+
+Resolution and declared bitrate are shown under video rows, loaded from the selected format's manifest in the background (at most two parallel requests). The values describe the highest-resolution available rendition, not measured throughput or the player's current adaptive quality. HLS uses `BANDWIDTH`; DASH labels the video representation's bitrate explicitly as video-only. Missing metadata is omitted. Metadata requests stop on navigation or playback and successful results are reused within the screen.
+
+Browser-only DASH parser checks: serve the repository and open `tests/manifest-browser.html` (uses native DOMParser).

@@ -1,4 +1,4 @@
-/* Lift for Lampa v0.2.3. Standalone script; no remote code or native bridge required. */
+/* Lift for Lampa v0.2.4. Standalone script; no remote code or native bridge required. */
 (function (root) {
     'use strict';
     var DISCOVERY = 'https://borov.sourcecraft.site/domains/domains.txt';
@@ -146,7 +146,45 @@
             return {host: best.host, value: result};
         });
     }
-    var core = {collectPlaylists: collectPlaylists, matchMovie: matchMovie, domains: domains, entries: entries, searchItems: searchItems, firstValid: firstValid, escape: escape, mediaCandidates: mediaCandidates};
+    function manifestMetadata(text, format) {
+        var variants = [];
+        function add(width, height, bandwidth) {
+            var w = Number(width), h = Number(height), b = Number(bandwidth);
+            if (isFinite(w) && isFinite(h) && isFinite(b) && w > 0 && h > 0 && b > 0) {
+                variants.push({width: w, height: h, bitrate: b, videoOnly: format !== 'hls'});
+            }
+        }
+        if (format === 'hls') {
+            if (!/^\s*#EXTM3U/.test(text)) return null;
+            String(text).split(/\r?\n/).forEach(function (line) {
+                if (line.indexOf('#EXT-X-STREAM-INF:') !== 0) return;
+                var attrs = {}, m, re = /([A-Z0-9-]+)=(?:"([^"]*)"|([^,]*))/g;
+                while ((m = re.exec(line.slice(18)))) attrs[m[1]] = m[2] == null ? m[3] : m[2];
+                var size = /^(\d+)x(\d+)$/i.exec(attrs.RESOLUTION || '');
+                if (size) add(size[1], size[2], attrs.BANDWIDTH);
+            });
+        } else if (root.DOMParser) {
+            var doc = new root.DOMParser().parseFromString(text, 'application/xml');
+            if (doc.getElementsByTagName('parsererror').length) return null;
+            var reps = doc.getElementsByTagNameNS('*', 'Representation');
+            for (var i = 0; i < reps.length; i++) {
+                var rep = reps[i], adaptation = rep.parentNode;
+                var mime = rep.getAttribute('mimeType') || adaptation.getAttribute('mimeType') || '';
+                var type = rep.getAttribute('contentType') || adaptation.getAttribute('contentType') || '';
+                if (type !== 'video' && mime.indexOf('video/') !== 0) continue;
+                add(rep.getAttribute('width') || adaptation.getAttribute('width'),
+                    rep.getAttribute('height') || adaptation.getAttribute('height'), rep.getAttribute('bandwidth'));
+            }
+        }
+        variants.sort(function (a, b) { return b.width * b.height - a.width * a.height || b.bitrate - a.bitrate; });
+        return variants[0] || null;
+    }
+    function metadataLabel(info) {
+        if (!info) return '';
+        var bitrate = info.bitrate >= 10000 ? (info.bitrate / 1000000).toFixed(2).replace('.', ',') + ' Мбит/с' : Math.round(info.bitrate / 1000) + ' кбит/с';
+        return 'до ' + info.width + '×' + info.height + ' · ' + (info.videoOnly ? 'видео ' : '') + 'до ' + bitrate;
+    }
+    var core = {manifestMetadata: manifestMetadata, metadataLabel: metadataLabel, collectPlaylists: collectPlaylists, matchMovie: matchMovie, domains: domains, entries: entries, searchItems: searchItems, firstValid: firstValid, escape: escape, mediaCandidates: mediaCandidates};
     if (typeof module === 'object' && module.exports && !root.document) { module.exports = core; return; }
     if (!root.document || root.lampa_lift_plugin) return;
     root.lampa_lift_plugin = true;
@@ -219,17 +257,20 @@
             }, function (e) { cleanup(); throw e; });
         });
     }
-    function probe(s, entry, format) {
+    function readManifest(s, entry, format, timeout) {
         var candidates = mediaCandidates(entry.streams[format], entry.mirrors);
         function next(i) {
             if (s.closed) return Promise.reject(new Error('cancelled'));
             if (i >= candidates.length) return Promise.reject(new Error('Видеосерверы Lift недоступны'));
-            return request(s, candidates[i], false, 6000).then(function (text) {
+            return request(s, candidates[i], false, timeout || 6000).then(function (text) {
                 if (format === 'hls' ? !/^\s*#EXTM3U/.test(text) : !/<MPD[\s>]/.test(text)) throw new Error('invalid manifest');
-                return candidates[i];
+                return {url: candidates[i], text: text};
             }).catch(function () { return next(i + 1); });
         }
         return next(0);
+    }
+    function probe(s, entry, format) {
+        return readManifest(s, entry, format).then(function (result) { return result.url; });
     }
     function payload(entry, format, movie, url) {
         var title = entry.season == null ? entry.title : entry.title + ' / S' + entry.season + ' E' + entry.label;
@@ -248,6 +289,7 @@
         var scroll = new L.Scroll({mask: true, over: true}), filter = new L.Filter(object);
         var all = [], matches = [], rows = [], last, job, timer, busy = false, stopped = false, destroyed = false, reload = false;
         var query = object.search, selectedId, manualSearch = false;
+        var infoSession, infoCache = {};
         var cardKey = [movie.source || 'tmdb', movie.original_name || movie.name ? 'tv' : 'movie', movie.id || query].join(':');
         var choices = L.Storage.get('lift_choices_v2', {});
         if (!choices || typeof choices !== 'object' || Array.isArray(choices)) choices = {};
@@ -268,7 +310,10 @@
             return job;
         }
         function finish() { busy = false; self.activity.loader(false); }
-        function clear() { scroll.clear(); rows = []; last = null; }
+        function clear() {
+            if (infoSession) infoSession.abort();
+            scroll.clear(); rows = []; last = null;
+        }
         function row(title, detail, action, key) {
             var node = root.$('<div class="online selector"><div class="online__body"><div class="online__title"></div><div class="online__quality"></div></div></div>');
             node.find('.online__title').text(title);
@@ -308,15 +353,36 @@
         }
         function drawEntries() {
             clear(); updateFilters();
+            var s = infoSession = session(), tasks = [], renderingFormat = format, running = 0;
+            function valid() { return !s.closed && infoSession === s && current(); }
             all.filter(function (e) { return e.season === season && e.streams[format]; }).forEach(function (entry) {
                 var play = payload(entry, format, movie);
-                var node = row(entry.season == null ? entry.title : 'Серия ' + entry.label,
-                    [entry.season == null ? '' : entry.title, formatLabels[format], entry.tracks.map(function (t) { return t.name; }).join(' / ')].filter(Boolean).join(' · '),
+                var details = [Number(play.timeline.percent) >= 90 ? 'Просмотрено' : '',
+                    entry.season == null ? '' : entry.title, formatLabels[format]];
+                var voices = entry.tracks.map(function (t) { return t.name; }).join(' / ');
+                function detail(info) { return details.concat([metadataLabel(info), voices]).filter(Boolean).join(' · '); }
+                var key = renderingFormat + ':' + entry.streams[renderingFormat];
+                var cached = Object.prototype.hasOwnProperty.call(infoCache, key);
+                var node = row(entry.season == null ? entry.title : 'Серия ' + entry.label, detail(cached ? infoCache[key] : null),
                     function () { self.play(entry); }, entry.key || entry.season + ':' + entry.episode);
                 if (L.Timeline.render) node.append(L.Timeline.render(play.timeline));
-                if (Number(play.timeline.percent) >= 90) node.find('.online__quality').text('Просмотрено · ' + formatLabels[format]);
+                if (!cached) tasks.push(function () {
+                    return readManifest(s, entry, renderingFormat, 4000).then(function (manifest) {
+                        if (!valid()) return;
+                        var info = manifestMetadata(manifest.text, renderingFormat);
+                        infoCache[key] = info;
+                        node.find('.online__quality').text(detail(info));
+                    }).catch(function () { /* Metadata is optional; playback stays available. */ });
+                });
             });
-            save(); self.activate();
+            function pump() {
+                if (!valid()) return;
+                while (running < 2 && tasks.length) {
+                    running++;
+                    tasks.shift()().then(function () { running--; pump(); });
+                }
+            }
+            save(); self.activate(); pump();
         }
         function drawMatches() {
             clear(); filter.set('sort', []); filter.set('filter', []);
@@ -362,6 +428,7 @@
         };
         this.play = function (entry) {
             if (busy || !current()) return;
+            if (infoSession) infoSession.abort();
             lastKey = entry.key || entry.season + ':' + entry.episode; save();
             var s = begin(), chosenFormat = format;
             probe(s, entry, chosenFormat).then(function (url) {
@@ -432,6 +499,7 @@
             stopped = true; reload = reload || busy; busy = false;
             clearTimeout(timer);
             if (job) job.abort();
+            if (infoSession) infoSession.abort();
         };
         this.destroy = function () {
             self.stop(); destroyed = true;
@@ -458,7 +526,7 @@
             if (sources.length) sources.append(button);
             else render.find('.view--torrent').first().after(button);
         });
-        root.LampaLift = {version: '0.2.3', open: open};
+        root.LampaLift = {version: '0.2.4', open: open};
     }
     var tries = 0;
     function boot() {

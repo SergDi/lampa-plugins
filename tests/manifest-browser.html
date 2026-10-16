@@ -1,0 +1,17 @@
+<!doctype html><meta charset="utf-8"><title>Lift manifest parser checks</title><pre id="result">Running</pre>
+<script>
+(async function () {
+  var source = await (await fetch('../lift.js')).text();
+  var mod = {exports: {}};
+  new Function('window', 'module', source)({DOMParser: DOMParser}, mod);
+  var core = mod.exports;
+  function equal(got, expected) {
+    if (JSON.stringify(got) !== JSON.stringify(expected)) throw new Error(JSON.stringify({got: got, expected: expected}));
+  }
+  equal(core.manifestMetadata('<MPD xmlns="urn:mpeg:dash:schema:mpd:2011"><Period><AdaptationSet contentType="video" width="1920" height="1080"><Representation bandwidth="4200000"/><Representation width="640" height="360" bandwidth="9000000"/></AdaptationSet><AdaptationSet contentType="audio"><Representation width="8000" height="8000" bandwidth="99999999"/></AdaptationSet></Period></MPD>', 'dash_vp9'), {width:1920,height:1080,bitrate:4200000,videoOnly:true});
+  equal(core.metadataLabel(core.manifestMetadata('<MPD><Period><AdaptationSet mimeType="video/mp4"><Representation width="1280" height="720" bandwidth="2100000"/></AdaptationSet></Period></MPD>', 'dash_av1')), 'до 1280×720 · видео до 2,10 Мбит/с');
+  equal(core.manifestMetadata('<MPD><broken>', 'dash_av1'), null);
+  equal(core.manifestMetadata('<MPD><Period><AdaptationSet contentType="audio"><Representation bandwidth="128000"/></AdaptationSet></Period></MPD>', 'dash_vp9'), null);
+  document.getElementById('result').textContent = 'PASS: 4 DASH parser checks';
+})().catch(function (error) { document.getElementById('result').textContent = 'FAIL: ' + error.message; });
+</script>

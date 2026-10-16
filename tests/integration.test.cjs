@@ -153,3 +153,30 @@ test('season selector exposes choices directly and changes season in one selecti
  h.state.filter.onSelect('filter',options[2]);await new Promise(r=>setTimeout(r,20));
  assert.equal(h.rows()[0].attrs['data-lift-entry'],'3');
 });
+const hlsMetadata='#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=859387,RESOLUTION=1280x612,CODECS="avc1,mp4a"\nvideo.m3u8';
+test('rows show resolution and bitrate without starting playback and reuse metadata on return',async()=>{
+ const h=harness(url=>url.includes('video.test')?hlsMetadata:route(url));
+ h.window.LampaLift.open({id:12,title:'Film'});await settle();h.select(0);await settle();
+ assert.match(h.rows()[0].find('.online__quality').text(),/до 1280×612 · до 0,86 Мбит\/с/);
+ assert.equal(h.state.play,undefined);
+ const count=h.requests.filter(x=>x.url.includes('video.test')).length;
+ h.state.component.start();await settle();assert.equal(h.requests.filter(x=>x.url.includes('video.test')).length,count);
+});
+test('metadata failure leaves rows playable without fake zero values or errors',async()=>{
+ const h=harness(url=>url.includes('video.test')?'<html>offline</html>':route(url));
+ h.window.LampaLift.open({id:12,title:'Film'});await settle();h.select(0);await settle();
+ assert.equal(h.rows().length,1);assert.doesNotMatch(h.rows()[0].find('.online__quality').text(),/0×0|0,00/);
+ assert.equal(h.calls.filter(x=>x[0]==='error').length,0);
+});
+test('metadata queue is bounded and leaving cancels pending manifests',async()=>{
+ const h=harness(url=>{
+  if(url.includes('cdn.test'))return undefined;
+  if(url.includes('/playlist?'))return {seasons:[{season:1,episodes:Array.from({length:8},(_,i)=>({...film,episode:String(i+1),video_key:i+1,streams:{hls:'https://cdn.test/'+i+'.m3u8'}}))}]};
+  return route(url);
+ });
+ h.window.LampaLift.open({id:12,title:'Film'});await settle();h.select(0);await settle();
+ assert.equal(h.rows().length,8);assert.equal(h.state.loading,false);
+ const manifests=h.requests.filter(x=>x.url.includes('cdn.test'));assert.equal(manifests.length,2);
+ h.state.component.back();await settle();assert(manifests.every(x=>x.aborted));
+ assert.equal(h.requests.filter(x=>x.url.includes('cdn.test')).length,2);
+});

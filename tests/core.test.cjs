@@ -100,3 +100,14 @@ test('all unavailable or malformed playlist mirrors fail instead of rendering an
  assert.equal(typeof core.collectPlaylists,'function');
  await assert.rejects(core.collectPlaylists(['a','b'],async()=>({error:'offline'}),core.entries));
 });
+test('HLS metadata uses the highest video rendition and declared BANDWIDTH',()=>{
+ assert.equal(typeof core.manifestMetadata,'function');
+ const text='#EXTM3U\n#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=99999999,RESOLUTION=3840x2160\n#EXT-X-STREAM-INF:AVERAGE-BANDWIDTH=700000,BANDWIDTH=1109196,CODECS="avc1.64001f,mp4a.40.2",RESOLUTION=1280x612\na.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=438271,RESOLUTION=640x306\nb.m3u8';
+ assert.deepEqual(core.manifestMetadata(text,'hls'),{width:1280,height:612,bitrate:1109196,videoOnly:false});
+ assert.equal(core.metadataLabel(core.manifestMetadata(text,'hls')),'до 1280×612 · до 1,11 Мбит/с');
+});
+test('missing or invalid manifest metadata is not invented',()=>{
+ assert.equal(typeof core.manifestMetadata,'function');
+ for(const text of ['<html>error</html>','#EXTM3U\n#EXTINF:10\na.ts','#EXTM3U\n#EXT-X-STREAM-INF:RESOLUTION=0x612,BANDWIDTH=-2'])assert.equal(core.manifestMetadata(text,'hls'),null);
+ assert.equal(core.metadataLabel(null),'');
+});
