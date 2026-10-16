@@ -1,4 +1,4 @@
-/* Lift for Lampa v0.2.1. Standalone script; no remote code or native bridge required. */
+/* Lift for Lampa v0.2.2. Standalone script; no remote code or native bridge required. */
 (function (root) {
     'use strict';
     var DISCOVERY = 'https://borov.sourcecraft.site/domains/domains.txt';
@@ -113,7 +113,40 @@
             });
         });
     }
-    var core = {matchMovie: matchMovie, domains: domains, entries: entries, searchItems: searchItems, firstValid: firstValid, escape: escape, mediaCandidates: mediaCandidates};
+    function collectPlaylists(hosts, request, validate) {
+        return Promise.all(hosts.map(function (h) {
+            return Promise.resolve().then(function () { return request(h); }).then(function (data) {
+                return {host: h, value: validate(data)};
+            }).catch(function () { return null; });
+        })).then(function (responses) {
+            responses = responses.filter(Boolean);
+            if (!responses.length) throw new Error('Серверы Lift не ответили. Попробуйте позже.');
+            var merged = {}, best = responses[0];
+            function richer(a, b) {
+                var ar = [a.streams.hls ? 1 : 0, Object.keys(a.streams).length, a.tracks.length, a.subtitles.length];
+                var br = [b.streams.hls ? 1 : 0, Object.keys(b.streams).length, b.tracks.length, b.subtitles.length];
+                for (var i = 0; i < ar.length; i++) if (ar[i] !== br[i]) return ar[i] > br[i];
+                return false;
+            }
+            responses.forEach(function (response) {
+                if (response.value.length > best.value.length) best = response;
+                response.value.forEach(function (entry) {
+                    var key = entry.season == null ? 'movie' : entry.season + ':' + (entry.episode || entry.key);
+                    // Keep URLs, audio/subtitles and CDN mirrors from the same response together.
+                    if (!merged[key] || richer(entry, merged[key])) merged[key] = entry;
+                });
+            });
+            var result = Object.keys(merged).map(function (key) { return merged[key]; });
+            result.sort(function (a, b) {
+                if (a.season !== b.season) return Number(a.season) - Number(b.season);
+                var ae = Number(a.episode), be = Number(b.episode);
+                if (a.episode && b.episode && isFinite(ae) && isFinite(be) && ae !== be) return ae - be;
+                return String(a.episode || '').localeCompare(String(b.episode || ''));
+            });
+            return {host: best.host, value: result};
+        });
+    }
+    var core = {collectPlaylists: collectPlaylists, matchMovie: matchMovie, domains: domains, entries: entries, searchItems: searchItems, firstValid: firstValid, escape: escape, mediaCandidates: mediaCandidates};
     if (typeof module === 'object' && module.exports && !root.document) { module.exports = core; return; }
     if (!root.document || root.lampa_lift_plugin) return;
     root.lampa_lift_plugin = true;
@@ -164,7 +197,7 @@
             return found;
         }).catch(function () { return []; });
     }
-    function api(s, path, validate) {
+    function api(s, path, validate, collect) {
         return discover(s).then(function (found) {
             if (s.closed) throw new Error('cancelled');
             var hosts = unique((preferred ? [preferred] : []).concat(found, domains(FALLBACK)));
@@ -177,7 +210,8 @@
                 var i = s.pending.indexOf(abortGroup);
                 if (i >= 0) s.pending.splice(i, 1);
             }
-            return firstValid(hosts, function (h) { return request(group, h + path, true); }, validate).then(function (result) {
+            var strategy = collect ? collectPlaylists : firstValid;
+            return strategy(hosts, function (h) { return request(group, h + path, true, collect ? 6000 : 10000); }, validate).then(function (result) {
                 cleanup();
                 if (s.closed) throw new Error('cancelled');
                 preferred = result.host;
@@ -322,7 +356,7 @@
         };
         this.load = function () {
             clear(); var s = begin();
-            api(s, '/playlist?id=' + encodeURIComponent(selectedId), entries).then(function (items) {
+            api(s, '/playlist?id=' + encodeURIComponent(selectedId), entries, true).then(function (items) {
                 if (!live(s)) return;
                 finish(); all = items; drawEntries();
             }).catch(function (err) { error(s, err, self.load); });
@@ -421,7 +455,7 @@
             if (sources.length) sources.append(button);
             else render.find('.view--torrent').first().after(button);
         });
-        root.LampaLift = {version: '0.2.1', open: open};
+        root.LampaLift = {version: '0.2.2', open: open};
     }
     var tries = 0;
     function boot() {

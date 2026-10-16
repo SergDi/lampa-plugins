@@ -129,3 +129,16 @@ test('explicit Search Lift still allows choosing another release',async()=>{
  h.state.filter.onSearch('Film');await settle();
  assert.equal(h.rows()[0].attrs['data-lift-result'],70);
 });
+test('See screen exposes all seasons even when fastest mirror returns only season two',async()=>{
+ const h=harness(url=>{
+  if(url.includes('/playlist?')){
+   const seasons=url.includes('faphz.com')?[3,1,2]:[2];
+   return {title:'See',seasons:seasons.map(season=>({season,episodes:[{...film,video_key:season,episode:'1'}]}))};
+  }
+  return route(url);
+ });
+ h.window.LampaLift.open({id:80752,name:'Видеть',original_name:'See'});await settle();h.select(0);await settle();
+ const choices=h.state.filter.data.filter.find(x=>x.stype==='season').items;
+ assert.deepEqual(Array.from(choices,x=>x.season),[1,2,3]);
+ assert.equal(h.state.play,undefined);
+});

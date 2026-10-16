@@ -72,3 +72,31 @@ test('distinguishes film, animation and series with the same title and year',()=
  assert.equal(core.matchMovie([{id:4,name:'Same',year:2022,type:7}],tv)?.id,4);
  assert.equal(core.matchMovie([{id:5,name:'Same',year:2022,type:99}],movie),null);
 });
+function seasonReply(seasons) {
+ return {title:'See',seasons:seasons.map(n=>({season:n,episodes:Array.from({length:8},(_,i)=>({episode:String(i+1),video_key:n*100+i,streams:{hls:'https://cdn.test/'+n+'/'+(i+1)+'.m3u8'}}))}))};
+}
+test('playlist collection waits for fuller mirrors and merges all three See seasons without duplicates',async()=>{
+ assert.equal(typeof core.collectPlaylists,'function');
+ const result=await core.collectPlaylists(['fast','full','overlap','down'],async host=>{
+  if(host==='down')throw new Error('offline');
+  if(host==='full'){await new Promise(r=>setTimeout(r,25));return seasonReply([3,1,2]);}
+  return seasonReply(host==='fast'?[2]:[1,3]);
+ },core.entries);
+ assert.equal(result.value.length,24);
+ assert.deepEqual([...new Set(result.value.map(e=>e.season))],[1,2,3]);
+ assert.deepEqual(result.value.filter(e=>e.season===1).map(e=>e.episode),['1','2','3','4','5','6','7','8']);
+});
+test('playlist mirrors complement each other and retain complete per-episode media metadata',async()=>{
+ assert.equal(typeof core.collectPlaylists,'function');
+ const result=await core.collectPlaylists(['a','b'],async host=>{
+  const p=seasonReply(host==='a'?[1,2]:[2,3]);
+  if(host==='b')p.seasons[0].episodes[0].streams.dash_vp9='https://b.test/2/1.mpd?sig=x';
+  return p;
+ },core.entries);
+ assert.equal(result.value.length,24);
+ assert.equal(result.value.find(e=>e.season===2&&e.episode==='1').streams.dash_vp9,'https://b.test/2/1.mpd?sig=x');
+});
+test('all unavailable or malformed playlist mirrors fail instead of rendering an empty success',async()=>{
+ assert.equal(typeof core.collectPlaylists,'function');
+ await assert.rejects(core.collectPlaylists(['a','b'],async()=>({error:'offline'}),core.entries));
+});
