@@ -28,3 +28,9 @@ Playlist responses are collected from all available mirrors (each request has a 
 Resolution and declared bitrate are shown under video rows, loaded from the selected format's manifest in the background (at most two parallel requests). The values describe the highest-resolution available rendition, not measured throughput or the player's current adaptive quality. HLS uses `BANDWIDTH`; DASH labels the video representation's bitrate explicitly as video-only. Missing metadata is omitted. Metadata requests stop on navigation or playback and successful results are reused within the screen.
 
 Browser-only DASH parser checks: serve the repository and open `tests/manifest-browser.html` (uses native DOMParser).
+
+## APTV Tube prototype
+
+`carplay-tube.html` is a standalone YouTube link player for the APTV browser, not a Lampa plugin. It uses the official YouTube iframe API and provides native HTML buttons for Tab/Shift+Tab/Enter navigation, arrow-key navigation outside the input, a key-event diagnostic, and local saved video IDs. No account credentials are collected.
+
+The stage fills the browser viewport. “Hide panel” hides controls until keyboard focus returns; it does not hide APTV's own chrome or request native fullscreen. The iframe is excluded from sequential tab navigation after initialization. Playback, autoplay, embed restrictions and actual rotary-controller events still depend on APTV/YouTube and need testing in a parked car. Search and account integration are not implemented. Saved links belong to this browser's local storage.
